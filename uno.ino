@@ -18,6 +18,7 @@ enum state {
   TRIGGERED_ONCE,
   TRIGGERED_TWICE,
   TRIGGERING,
+  IN_BETWEEN_TRIGGERS,
   IN_MENU,
   
 };
@@ -74,7 +75,7 @@ int ledState = 0;
 void setup() {
   // put your setup code here, to run once:
   
-  pinMode(13,OUTPUT);
+  pinMode(A4,OUTPUT);
   pinMode(2,INPUT_PULLUP);
   pinMode(3,INPUT_PULLUP);
   
@@ -82,9 +83,7 @@ void setup() {
   pinMode (green, OUTPUT);
   pinMode (blue, OUTPUT);
   
-  digitalWrite(red, LOW);
-  digitalWrite(green, HIGH);
-  digitalWrite(blue, HIGH);
+  setStatusColor(0,0,0);
   attachInterrupt(1,spray_isr,FALLING);
   
 }
@@ -93,51 +92,57 @@ void setup() {
 
 unsigned long triggerDelay = 5000; // from EEPROM;
 
-
+unsigned long inBetweenTriggersDelay = 200;
 
 volatile unsigned long triggerTime;
-volatile unsigned long inbetweenTriggersTime;
+volatile unsigned long inBetweenTriggersTime;
+
 
 
 unsigned long triggeringTime = 0;
 
-unsigned long  onTime = 2000;
+unsigned long  onTime = 4000;
+
+
+bool triggerTwice = false;
 
 void triggering() {
-/*  triggeringTime = millis();
-  digitalWrite(13, LOW);
-  // if it has been on long enough
-  if (millis() - triggeringTime > onTime) {
-    digitalWrite(13,HIGH);
-    state = NOT_IN_USE;
 
-    
-  }*/
   
-  setStatusColor(0,1,0);
-  digitalWrite(13,HIGH);
+  setStatusColor(0,0,0);
+  digitalWrite(A4,HIGH);
   
   
   
   if (millis() - triggeringTime > onTime) {
-    digitalWrite(13,LOW);
-    state = NOT_IN_USE;
+    digitalWrite(A4,LOW);
+    if (!triggerTwice){
+      state = NOT_IN_USE;
+    } else{
+      state = IN_BETWEEN_TRIGGERS;
+      inBetweenTriggersTime = millis();
+      triggerTwice = false;
+    }
   }
 }
 
-void triggered(bool twice) {
+void inBetweenTriggers() {
+  if (millis() - inBetweenTriggersTime > inBetweenTriggersDelay) {
+    state = TRIGGERING;
+    triggerTwice = false;
+    triggeringTime = millis();
+  }
+}
+
+void triggered() {
  
-  setStatusColor(0,0,0);
+  setStatusColor(0,1,0);
   if (millis() - triggerTime > triggerDelay) {
     state = TRIGGERING;
     triggeringTime = millis();
   }
 }
 
-
-void setTriggeredOnce() {
-
-}
 
 
 // the interrupt service routine for when the spray button is pressed
@@ -146,7 +151,7 @@ void spray_isr() {
   static long debounceDelay = 50;
   
   if ((millis() - lastDebounceTime) > debounceDelay) {
-      state = TRIGGERED_ONCE;
+      state = TRIGGERED_TWICE;
       triggerTime = lastDebounceTime = millis();
       
   }
@@ -222,9 +227,10 @@ void stateMachine() {
   case USE1: break;
   case USE2: break;
   case USE_CLEAN: break;
-  case TRIGGERED_ONCE: triggered(false); break;
-  case TRIGGERED_TWICE: triggered(true); break;
+  case TRIGGERED_ONCE: triggered(); break;
+  case TRIGGERED_TWICE: triggerTwice = true; triggered(); break;
   case TRIGGERING: triggering(); break;
+  case IN_BETWEEN_TRIGGERS: inBetweenTriggers(); break;
   case IN_MENU: break;
   }
 }
