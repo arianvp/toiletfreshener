@@ -14,8 +14,8 @@ const int green = 1;
 const int blue = 12;
 
 
-const int buttonLeft = 11;
-const int buttonRight = 10;
+const int leftButton = 11;
+const int rightButton = 10;
 
 const int magneticSwitch = 2;
 
@@ -45,6 +45,9 @@ const int lightSensor = A0;
 const int lightThreshold = 200;
 
 int ledState;
+
+
+int ledPin = 13;
 
 
 // this value is from EEPROM
@@ -120,7 +123,7 @@ void setup() {
   pinMode (red, OUTPUT);
   pinMode (green, OUTPUT);
   pinMode (blue, OUTPUT);
-  pinMode(13, OUTPUT);
+  pinMode(ledPin, OUTPUT);
 
   setStatusColor(0, 0, 0);
   attachInterrupt(1, spray_isr, FALLING);
@@ -229,42 +232,60 @@ void exitMenu() {
 
 
 
-void handleOpt1Press() {
+void handleLeftButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
-  static long debounceDelay = 50;
+  static long debounceDelay = 100;
   static unsigned long lastDebounceTime;
 
-  // read the state of the switch into a local variable:
-  int reading = digitalRead(10);
+  int reading = digitalRead(leftButton);
 
-  // check to see if you just pressed the button
-  // (i.e. the input went from LOW to HIGH),  and you've waited
-  // long enough since the last press to ignore any noise:
 
-  // If the switch changed, due to noise or pressing:
   if (reading != lastButtonState) {
-    // reset the debouncing timer
     lastDebounceTime = millis();
   }
 
   if ((millis() - lastDebounceTime) > debounceDelay) {
-    // whatever the reading is at, it's been there for longer
-    // than the debounce delay, so take it as the actual current state:
 
-    // if the button state has changed:
     if (reading != buttonState) {
       buttonState = reading;
 
-      // only toggle the LED if the new button state is HIGH
+   
       if (buttonState == LOW) {
-        ledState = !ledState;
         // TODO do stuff
+        
+        digitalWrite(ledPin,HIGH);
       }
     }
   }
-  // save the reading.  Next time through the loop,
-  // it'll be the lastButtonState:
+
+  lastButtonState = reading;
+}
+
+void handleRightButton() {
+  static int lastButtonState = HIGH;
+  static int buttonState;
+  static long debounceDelay = 100;
+  static unsigned long lastDebounceTime;
+
+  int reading = digitalRead(rightButton);
+
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+
+    if (reading != buttonState) {
+      buttonState = reading;
+
+
+      if (buttonState == LOW) {
+
+        digitalWrite(ledPin, LOW);
+      }
+    }
+  }
   lastButtonState = reading;
 }
 
@@ -337,11 +358,11 @@ void loop() {
 
 
   if (true) {
-    handleOpt1Press();
+    handleLeftButton();
+    handleRightButton();
   
     handleMotionSensor();
     handleDistanceSensor();
-    digitalWrite(13, ledState);
     
     //digitalWrite(13,digitalRead(motionSensor));
     stateMachine();
