@@ -1,3 +1,5 @@
+#include <DallasTemperature.h>
+
 #include <NewPing.h>
 
 #include <OneWire.h>
@@ -12,6 +14,9 @@ const int green = 1;
 const int blue = 12;
 
 
+
+const int freshener = A4;
+
 const int motionSensor = A1;
 
 
@@ -25,8 +30,16 @@ const unsigned long pingSpeed = 40;
 NewPing sonar(trigger,echo,maxDistance);
 
 
+// set up temperature
+const int temperatureSensor = A5;
+OneWire oneWire(temperatureSensor);
+DallasTemperature temperature(&oneWire);
 
 int ledState;
+
+
+// this value is from EEPROM
+short chargesRemaining = 1000;
 
 enum state {
   USE_UNKNOWN,
@@ -47,6 +60,8 @@ enum menu_state {
 };
 
 
+
+// TODO initial state
 volatile state state = TRIGGERED_TWICE;
 
 
@@ -59,6 +74,35 @@ const long DEBOUNCE = 40;
 
 
 LiquidCrystal lcd(9,8,7,6,5,4);
+
+
+const unsigned short chargeAddr = 5;
+const unsigned short triggerDelayAddr = chargeAddr + 2;
+
+
+short getAt(unsigned short addr) {
+  return EEPROM.read(addr)<<8 | EEPROM.read(addr+1);
+}
+
+
+void decrementAt(unsigned short addr) {
+  setAt(addr,getAt(addr)-1);
+}
+
+void setAt(unsigned short addr, unsigned short value) {
+  EEPROM.write(addr, value>>8);
+  EEPROM.write(addr+1,value);
+}
+void resetCharges() {
+  setAt(chargeAddr,2000);
+}
+void resetTriggerDelay() {
+  setAt(triggerDelayAddr, 5000);
+}
+
+
+
+
 void setup() {
 
   lcd.begin(16,2);
@@ -79,6 +123,7 @@ void setup() {
   
   
   pingTimer = millis();
+  
 
 }
 
@@ -95,21 +140,21 @@ volatile unsigned long inBetweenTriggersTime;
 
 unsigned long triggeringTime = 0;
 
-unsigned long  onTime = 4000;
+// TODO better nam
+unsigned long  onTime = 3000;
 
 
 bool triggerTwice = false;
 
 void triggering() {
 
-
   setStatusColor(0, 0, 0);
-  digitalWrite(A4, HIGH);
-
+  digitalWrite(freshener, HIGH);
 
 
   if (millis() - triggeringTime > onTime) {
-    digitalWrite(A4, LOW);
+    decrementAt(chargeAddr);
+    digitalWrite(freshener, LOW);
     if (!triggerTwice) {
       state = NOT_IN_USE;
 
@@ -151,8 +196,23 @@ void spray_isr() {
     triggerTime = lastDebounceTime = millis();
 
   }
+}
+
+
+// called when the door is closed
+void door_isr() {
+  static volatile unsigned long lastDebounceTime;
+  static long debounceDelay = 50;
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    
+    // TODO implement gevolgen
+    triggerTime = lastDebounceTime = millis();
+
+  }
 
 }
+
 
 void exitMenu() {
   state = NOT_IN_USE;
@@ -212,10 +272,12 @@ void echo_isr() {
   
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
-    char str[10];
+    /*char str[10];
     sprintf(str, "%.3d", cm);
     lcd.setCursor(0,0);
-    lcd.print(str);
+    lcd.print(str);*/
+    
+    // TODO Echo
   }
 }
 
@@ -265,13 +327,31 @@ void stateMachine() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  handleOpt1Press();
 
-  handleMotionSensor();
-  handleDistanceSensor();
-  digitalWrite(13, ledState);
-  //digitalWrite(13,digitalRead(motionSensor));
-  stateMachine();
+  if (true) {
+    handleOpt1Press();
+  
+    handleMotionSensor();
+    handleDistanceSensor();
+    digitalWrite(13, ledState);
+    
+    //digitalWrite(13,digitalRead(motionSensor));
+    stateMachine();
+    
+    lcd.setCursor(0,0);
+    temperature.requestTemperatures();
+    lcd.print(temperature.getTempCByIndex(0));
+    lcd.print((char)223);
+    lcd.print("C");
+    
+    
+    lcd.setCursor(0,1);
+    lcd.print("Charges:");
+    char str[5];
+    sprintf(str, "%.4d", getAt(chargeAddr));
+    lcd.print(str);
+  } else {
+  }
 
 }
 
