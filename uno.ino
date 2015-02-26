@@ -14,6 +14,10 @@ const int green = 1;
 const int blue = 12;
 
 
+const int buttonLeft = 11;
+const int buttonRight = 10;
+
+const int magneticSwitch = 2;
 
 const int freshener = A4;
 
@@ -34,6 +38,11 @@ NewPing sonar(trigger,echo,maxDistance);
 const int temperatureSensor = A5;
 OneWire oneWire(temperatureSensor);
 DallasTemperature temperature(&oneWire);
+
+
+// set up light sensor
+const int lightSensor = A0;
+const int lightThreshold = 200;
 
 int ledState;
 
@@ -65,12 +74,7 @@ enum menu_state {
 volatile state state = TRIGGERED_TWICE;
 
 
-
-
-
 const long DEBOUNCE = 40;
-
-
 
 
 LiquidCrystal lcd(9,8,7,6,5,4);
@@ -120,6 +124,8 @@ void setup() {
 
   setStatusColor(0, 0, 0);
   attachInterrupt(1, spray_isr, FALLING);
+  
+  attachInterrupt(2, magneticSwitch_isr, FALLING);
   
   
   pingTimer = millis();
@@ -200,13 +206,15 @@ void spray_isr() {
 
 
 // called when the door is closed
-void door_isr() {
+void magneticSwitch_isr() {
   static volatile unsigned long lastDebounceTime;
   static long debounceDelay = 50;
 
   if ((millis() - lastDebounceTime) > debounceDelay) {
     
     // TODO implement gevolgen
+    
+    
     triggerTime = lastDebounceTime = millis();
 
   }
