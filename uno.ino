@@ -153,7 +153,7 @@ void spray_isr() {
   
   if ((millis() - lastDebounceTime) > debounceDelay) {
       digitalWrite(A4,LOW);
-      state = TRIGGERED_TWICE;
+      state = TRIGGERED_ONCE;
       triggerTime = lastDebounceTime = millis();
       
   }
@@ -229,7 +229,7 @@ void stateMachine() {
   case USE1: break;
   case USE2: break;
   case USE_CLEAN: break;
-  case TRIGGERED_ONCE: triggered(); break;
+  case TRIGGERED_ONCE: triggerTwice = false; triggered(); break;
   case TRIGGERED_TWICE: triggerTwice = true; triggered(); break;
   case TRIGGERING: triggering(); break;
   case IN_BETWEEN_TRIGGERS: inBetweenTriggers(); break;
