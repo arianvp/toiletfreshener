@@ -28,7 +28,7 @@ enum menu_state {
 };
 
 
-volatile state state;
+volatile state state = TRIGGERED_TWICE;
 
 
 const long DEBOUNCE = 40;
@@ -118,6 +118,7 @@ void triggering() {
     digitalWrite(A4,LOW);
     if (!triggerTwice){
       state = NOT_IN_USE;
+
     } else{
       state = IN_BETWEEN_TRIGGERS;
       inBetweenTriggersTime = millis();
@@ -151,6 +152,7 @@ void spray_isr() {
   static long debounceDelay = 50;
   
   if ((millis() - lastDebounceTime) > debounceDelay) {
+      digitalWrite(A4,LOW);
       state = TRIGGERED_TWICE;
       triggerTime = lastDebounceTime = millis();
       
@@ -215,7 +217,7 @@ void setStatusColor(int r, int g, int b) {
   digitalWrite(blue, !b);
 }
 void notInUse() {
-  
+ 
 }
 
 
