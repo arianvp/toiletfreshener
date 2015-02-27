@@ -53,6 +53,9 @@ int ledPin = 13;
 // this value is from EEPROM
 short chargesRemaining = 1000;
 
+LiquidCrystal lcd(9,8,7,6,5,4);
+
+
 enum state {
   USE_UNKNOWN,
   NOT_IN_USE,
@@ -68,7 +71,9 @@ enum state {
 };
 
 enum menu_state {
-  LOLJEMOEDER
+  SET_DELAY,
+  RESET_CHARGES,
+  EXIT
 };
 
 
@@ -76,18 +81,22 @@ enum menu_state {
 // TODO initial state
 volatile state state = TRIGGERED_TWICE;
 
+volatile bool inMenu = false;
+volatile menu_state menuState;
 
 const long DEBOUNCE = 40;
 
 
-LiquidCrystal lcd(9,8,7,6,5,4);
 
-
+#define DEFAULT_CHARGES_VALUE 2000
 const unsigned short chargeAddr = 5;
+
+#define TRIGGER_DELAY_INCREMENT 5000
+#define MAX_TRIGGER_DELAY       60000
 const unsigned short triggerDelayAddr = chargeAddr + 2;
 
 
-short getAt(unsigned short addr) {
+unsigned short getAt(unsigned short addr) {
   return EEPROM.read(addr)<<8 | EEPROM.read(addr+1);
 }
 
@@ -124,7 +133,6 @@ void setup() {
   pinMode (green, OUTPUT);
   pinMode (blue, OUTPUT);
   pinMode(ledPin, OUTPUT);
-
   setStatusColor(0, 0, 0);
   attachInterrupt(1, spray_isr, FALLING);
   
@@ -132,13 +140,15 @@ void setup() {
   
   
   pingTimer = millis();
+
+  setAt(triggerDelayAddr, 5000);
   
 
 }
 
 
 
-unsigned long triggerDelay = 5000; // from EEPROM;
+//unsigned long triggerDelay = 5000; // from EEPROM;
 
 unsigned long inBetweenTriggersDelay = 200;
 
@@ -186,7 +196,7 @@ void inBetweenTriggers() {
 void triggered() {
 
   setStatusColor(0, 1, 0);
-  if (millis() - triggerTime > triggerDelay) {
+  if (millis() - triggerTime > (unsigned short) getAt(triggerDelayAddr)) {
     state = TRIGGERING;
     triggeringTime = millis();
   }
@@ -225,13 +235,6 @@ void magneticSwitch_isr() {
 }
 
 
-void exitMenu() {
-  state = NOT_IN_USE;
-}
-
-
-
-
 void handleLeftButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
@@ -252,13 +255,31 @@ void handleLeftButton() {
 
    
       if (buttonState == LOW) {
-        // TODO do stuff
-        
-        digitalWrite(ledPin,HIGH);
+        // any of the two buttons shoul get us into the menu
+        if (!inMenu) {
+          inMenu = true;
+          menuState = SET_DELAY;
+        } else {
+          // this button is used to select actions in the operator menu
+          switch (menuState) {
+            case RESET_CHARGES:
+              setAt(chargeAddr, DEFAULT_CHARGES_VALUE);
+              break;
+            case SET_DELAY:
+              setAt(triggerDelayAddr,TRIGGER_DELAY_INCREMENT+
+                   (getAt(triggerDelayAddr))
+                        %  (MAX_TRIGGER_DELAY));
+              break;
+            case EXIT:
+              inMenu = false;
+              state = NOT_IN_USE;
+              break;
+          }
+
+        }
       }
     }
   }
-
   lastButtonState = reading;
 }
 
@@ -281,8 +302,12 @@ void handleRightButton() {
 
 
       if (buttonState == LOW) {
+        // any of the two buttons shoul get us into the menu
+        if (!inMenu) {
+          inMenu = true;
+        }
 
-        digitalWrite(ledPin, LOW);
+        menuState = (menu_state) (((int)menuState + 1) % ((int)EXIT+1));
       }
     }
   }
@@ -353,14 +378,38 @@ void stateMachine() {
   }
 }
 
+
+void menuPrinter() {
+  lcd.setCursor(0,0);
+  char str[17];
+  switch (menuState) {
+    case SET_DELAY:
+      sprintf(str, "Delay: %.5u   ", getAt(triggerDelayAddr));
+      lcd.print(str);
+      lcd.setCursor(0,1);
+      lcd.print("Increase    ");
+      break;
+    case RESET_CHARGES:
+      sprintf(str, "Charges: %.4d", getAt(chargeAddr));
+      lcd.print(str);
+      lcd.setCursor(0,1);
+      lcd.print("Reset    ");
+      break;
+    case EXIT:
+      lcd.print("                 ");
+      lcd.setCursor(0,1);
+      lcd.print("Exit             ");
+      break;
+  }
+}
+
 void loop() {
   // put your main code here, to run repeatedly:
 
+  handleLeftButton();
+  handleRightButton();
 
-  if (true) {
-    handleLeftButton();
-    handleRightButton();
-  
+  if (!inMenu) {
     handleMotionSensor();
     handleDistanceSensor();
     
@@ -380,6 +429,8 @@ void loop() {
     sprintf(str, "%.4d", getAt(chargeAddr));
     lcd.print(str);
   } else {
+    menuPrinter();
+    
   }
 
 }
