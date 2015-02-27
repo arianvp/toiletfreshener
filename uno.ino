@@ -24,7 +24,6 @@ const int freshener = A4;
 const int motionSensor = A1;
 
 
-
 // Set up distance sensor
 const int trigger = A2;
 const int echo    = A3;
@@ -32,6 +31,12 @@ const int maxDistance = 190;
 volatile unsigned long pingTimer;
 const unsigned long pingSpeed = 40;
 NewPing sonar(trigger,echo,maxDistance);
+volatile bool person = false;
+//<70 = person detected, >70 = no person detected
+volatile unsigned long detectionTime = millis();
+unsigned int timeOut = 4000;
+volatile bool prevDistState = false;
+
 
 
 // set up temperature
@@ -43,6 +48,7 @@ DallasTemperature temperature(&oneWire);
 // set up light sensor
 const int lightSensor = A0;
 const int lightThreshold = 200;
+bool lightOn = false;
 
 int ledState;
 
@@ -129,10 +135,9 @@ void setup() {
   attachInterrupt(1, spray_isr, FALLING);
   
   attachInterrupt(2, magneticSwitch_isr, FALLING);
-  
-  
   pingTimer = millis();
   
+  state = NOT_IN_USE;
 
 }
 
@@ -301,11 +306,17 @@ void echo_isr() {
   
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
-    /*char str[10];
+    prevDistState = person;
+    if (cm < 70) {
+      detectionTime = millis();
+      person = true;
+    }
+    /*
+    char str[4];
     sprintf(str, "%.3d", cm);
     lcd.setCursor(0,0);
-    lcd.print(str);*/
-    
+    lcd.print(str);
+    */
     // TODO Echo
   }
 }
@@ -323,7 +334,12 @@ void handleDistanceSensor() {
 
 
 
-void processSensors() {
+void handleLDR() {
+  if (analogRead(lightSensor > lightThreshold)) {
+    lightOn = true;
+  } else {
+    lightOn = false;
+  }  
 }
 
 
@@ -333,16 +349,38 @@ void setStatusColor(int r, int g, int b) {
   digitalWrite(blue, !b);
 }
 void notInUse() {
+  if (person){
+    state = USE_UNKNOWN;
+  } else{
+    setStatusColor(0,0,0);
+  }
 
 }
+
+void useUnknown() {
+  setStatusColor(1,0,1); 
+  if (millis() - detectionTime > timeOut) {
+    state = NOT_IN_USE; 
+  } else {
+    
+  }
+}
+
+void use1() {
+  setStatusColor(1,1,0);
+  if (!lightOn) {
+    state = USE_UNKNOWN;
+  }
+}
+
 
 
 void stateMachine() {
 
   switch (state) {
-    case USE_UNKNOWN: break;
+    case USE_UNKNOWN: useUnknown(); break;
     case NOT_IN_USE: notInUse(); break;
-    case USE1: break;
+    case USE1: use1(); break;
     case USE2: break;
     case USE_CLEAN: break;
     case TRIGGERED_ONCE: triggerTwice = false; triggered(); break;
@@ -379,6 +417,7 @@ void loop() {
     char str[5];
     sprintf(str, "%.4d", getAt(chargeAddr));
     lcd.print(str);
+    
   } else {
   }
 
