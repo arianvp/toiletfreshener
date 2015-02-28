@@ -36,7 +36,7 @@
 #define SPRAY_BUTTON_DEBOUNCE  50
 
 // magnetc switch
-#define MAGNETIC_SWITCH_INT      2
+#define MAGNETIC_SWITCH_INT      0
 #define MAGNETIC_SWITCH_DEBOUNCE 50
 
 // Freshener
@@ -66,7 +66,6 @@
 
 
 
-
 // EEPROM Stuff
 
 #define CHARGE_ADDR             5
@@ -82,8 +81,8 @@
 enum state {
   NOT_IN_USE,
   USE_UNKNOWN,
-  USE1,
-  USE2,
+  USE_PEE,
+  USE_POO,
   USE_CLEAN,
   TRIGGERED_ONCE,
   TRIGGERED_TWICE,
@@ -167,8 +166,8 @@ void setupButtons() {
 void spray_isr();
 void magneticSwitch_isr();
 void setupIntButtons() {
-  pinMode(SPRAY_BUTTON_INT+1, INPUT_PULLUP);
-  pinMode(MAGNETIC_SWITCH_INT+1, INPUT_PULLUP);
+  pinMode(SPRAY_BUTTON_INT+2, INPUT_PULLUP);
+  pinMode(MAGNETIC_SWITCH_INT+2, INPUT_PULLUP);
   attachInterrupt(SPRAY_BUTTON_INT, spray_isr, FALLING);
   attachInterrupt(MAGNETIC_SWITCH_INT, magneticSwitch_isr, FALLING);
 }
@@ -199,7 +198,7 @@ void setup() {
 // We proceed to define the senses that our freshener has. 
 // These values will be updated by sensors. some of them asynchronously
 // hence the volatile annonations.
-volatile bool doorClosed;
+volatile bool doorOpen = true;
 bool          lightsOn;
 volatile bool personPresent;
 bool          flushing;
@@ -259,16 +258,16 @@ void triggered() {
 
 
 
-// called when the door is closed
+// called when the door is closed. LOW is closed. HIGH is open
 void magneticSwitch_isr() {
   static volatile unsigned long lastDebounceTime;
 
   if ((millis() - lastDebounceTime) > MAGNETIC_SWITCH_DEBOUNCE) {
     
-    // TODO implement gevolgen
-    
-    
-    triggerTime = lastDebounceTime = millis();
+    // why are we setting this? 
+    //triggerTime = lastDebounceTime = millis();
+    // doorOpen = false;
+    digitalWrite(13,HIGH);
 
   }
 
@@ -345,7 +344,6 @@ void handleLeftButton() {
 void handleRightButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
-  static long debounceDelay = 100;
   static unsigned long lastDebounceTime;
 
   int reading = digitalRead(RIGHT_BUTTON_PIN);
@@ -375,7 +373,7 @@ void handleRightButton() {
 }
 
 
-handleLightSensor() {
+void handleLightSensor() {
   lightsOn = analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD;
 }
 // Code for the motion sensor. It senses if we're flushing.
@@ -386,15 +384,13 @@ void handleMotionSensor() {
 
 // Code for the distance sensor . It senses if a person is present
 void echo_isr() {
-  
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
-
     personPresent = cm < 70;
   }
 }
 
-// TODO this might overflow
+// TODO FIXME this might overflow
 void handleDistanceSensor() {
   if (millis() >= pingTimer) {
     pingTimer += DISTANCE_PING_SPEED;
@@ -404,47 +400,95 @@ void handleDistanceSensor() {
 
 
 #define MAX_USE_UNKNOWN_TIME 5000
-unsigned long useUnknownTimer;
+unsigned long useUnknownTime;
+
 
 void useUnknown() {
-  setStatusColor(1,1,0);
-  if ((millis() - useUnknownTimer) > MAX_USE_UNKNOWN_TIME) {
-    state = NOT_IN_USE;
-  } else {
-    if (lightsOn) {
-      if (doorClosed) {
-        state = USE1;
+  setStatusColor(1,0,1);
+  static bool doorHasBeenClosed = false;
+  static unsigned long lastDebounceTime;
+
+  lcd.setCursor(0,0);
+  lcd.print(doorOpen);
+
+  // nope this doesn't work.
+  // What we really want to do is:
+  /*
+    Start a timer. (this is started when changing to the useUnknown state)
+    if before the timer expires the door closes. We go to USE_PEE
+    otherwise we go to use poo
+*/
+  
+  
+  /*if (doorOpen != lastDoorOpen) {
+    lastDebounceTime = millis();
+  }
+
+  
+  // DEBUG
+  if ((millis() - lastDebounceTime) > MAX_USE_UNKNOWN_TIME) {
+    // this is reached
+    if (_doorOpen != doorOpen) {
+      _doorOpen = doorOpen;
+      if (_doorOpen) {
+         state = USE_CLEAN;
       } else {
+         state = USE_PEE;
       }
     }
   }
+  lastDoorOpen = doorOpen;
+
+ */
+  
 }
 
 void notInUse() {
   if (personPresent) {
     state = USE_UNKNOWN;
-    useUnknownTimer = millis();
+    useUnknownTime = millis();
   }
   setStatusColor(0,0,0);
 }
 
-void use1() {
+//  this should be tweaked. Test in field! :)
+#define MAX_PEE_TIME  30000
+
+unsigned long peeTime;
+void usePee() {
+  setStatusColor(1,1,0);
+  // FIXME  What if people don't flush
+  if (flushing) {
+    state = TRIGGERED_ONCE;
+    triggerTime = millis();
+  } else {
+    if ((millis() - peeTime) > MAX_PEE_TIME) {
+      // we are probably taking a shit
+      state = USE_POO;
+    }
+  }
 }
 
-void use2() {
+// FIXME. setting timers manually is error-prone. make helper method
+void usePoo() {
+  setStatusColor(1,0,0);
+  if (flushing) {
+    state = TRIGGERED_TWICE;
+    triggerTime = millis();
+  }
 }
 
 void useClean() {
+  setStatusColor(0,0,1);
 }
 
 
 void stateMachine() {
-
   switch (state) {
     case USE_UNKNOWN: useUnknown(); break;
     case NOT_IN_USE: notInUse(); break;
-    case USE1: use1(); break;
-    case USE2: use2(); break;
+    case USE_PEE: usePee(); break;
+    case USE_POO: usePoo(); break;
     case USE_CLEAN: useClean(); break;
     case TRIGGERED_ONCE: triggerTwice = false; triggered(); break;
     case TRIGGERED_TWICE: triggerTwice = true; triggered(); break;
@@ -480,7 +524,6 @@ void menuPrinter() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
 
   handleLeftButton();
   handleRightButton();
