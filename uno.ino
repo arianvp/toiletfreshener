@@ -96,10 +96,11 @@ const unsigned short chargeAddr = 5;
 const unsigned short triggerDelayAddr = chargeAddr + 2;
 
 
+// utility code to acccess the EEPROM in steps of 16 bits
+
 unsigned short getAt(unsigned short addr) {
   return EEPROM.read(addr)<<8 | EEPROM.read(addr+1);
 }
-
 
 void decrementAt(unsigned short addr) {
   setAt(addr,getAt(addr)-1);
@@ -109,15 +110,24 @@ void setAt(unsigned short addr, unsigned short value) {
   EEPROM.write(addr, value>>8);
   EEPROM.write(addr+1,value);
 }
+
+
+// specific EEPROM helper functions for resetting tigger delay and charges
 void resetCharges() {
-  setAt(chargeAddr,2000);
+  setAt(chargeAddr,DEFAULT_CHARGES_VALUE);
 }
 void resetTriggerDelay() {
-  setAt(triggerDelayAddr, 5000);
+  setAt(triggerDelayAddr, TRIGGER_DELAY_INCREMENT);
 }
 
 
 
+// Sets the RGB led to a specific color
+void setStatusColor(int r, int g, int b) {
+  digitalWrite(red, !r);
+  digitalWrite(green, !g);
+  digitalWrite(blue, !b);
+}
 
 void setup() {
 
@@ -144,8 +154,15 @@ void setup() {
 
   setAt(triggerDelayAddr, 5000);
   
-
 }
+
+// We proceed to define the senses that our freshener has. 
+// These values will be updated by sensors. some of them asynchronously
+// hence the volatile annonations.
+volatile bool doorClosed;
+bool          lightsOn;
+volatile bool personPresent;
+bool          flushing;
 
 
 
@@ -162,8 +179,6 @@ unsigned long triggeringTime = 0;
 
 // TODO better nam
 unsigned long  onTime = 3000;
-
-
 bool triggerTwice = false;
 
 void triggering() {
@@ -206,19 +221,6 @@ void triggered() {
 
 
 
-// the interrupt service routine for when the spray button is pressed
-void spray_isr() {
-  static volatile unsigned long lastDebounceTime;
-  static long debounceDelay = 50;
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    digitalWrite(A4, LOW);
-    state = TRIGGERED_ONCE;
-    triggerTime = lastDebounceTime = millis();
-
-  }
-}
-
 
 // called when the door is closed
 void magneticSwitch_isr() {
@@ -236,7 +238,28 @@ void magneticSwitch_isr() {
 
 }
 
+// In this section we handle the three pushbuttons. 
+// one is used to trigger a spray.
+// the other two (left, and right) are used to control the operator menu.
 
+
+// the interrupt service routine for when the spray button is pressed
+void spray_isr() {
+  static volatile unsigned long lastDebounceTime;
+  static long debounceDelay = 50;
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    digitalWrite(A4, LOW);
+    state = TRIGGERED_ONCE;
+    triggerTime = lastDebounceTime = millis();
+
+  }
+}
+
+
+// to get inside the menu. either of the buttons has to be pressed.
+// once in the menu. the left button is the "action" button and the
+// right button is the "scroll" button. 
 void handleLeftButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
@@ -318,28 +341,21 @@ void handleRightButton() {
 }
 
 
+// Code for the motion sensor. It senses if we're flushing.
 void handleMotionSensor() {
-  
+ 
 }
 
 
-
-volatile int distance = 0;
+// Code for the distance sensor . It senses if a person is present
 void echo_isr() {
   
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
-    distance = cm;
-    /*char str[10];
-    sprintf(str, "%.3d", cm);
-    lcd.setCursor(0,0);
-    lcd.print(str);*/
-    
-    // TODO Echo
+
+    personPresent = cm < 70;
   }
 }
-
-
 
 
 // TODO this might overflow
@@ -353,28 +369,24 @@ void handleDistanceSensor() {
 
 
 
-void processSensors() {
-}
-
-
-void setStatusColor(int r, int g, int b) {
-  digitalWrite(red, !r);
-  digitalWrite(green, !g);
-  digitalWrite(blue, !b);
-}
-
 unsigned long maxUseUnknownTime = 5000;
 unsigned long useUnknownTimer;
 void useUnknown() {
+  setStatusColor(1,1,0);
   if ((millis() - useUnknownTimer) > maxUseUnknownTime) {
     state = NOT_IN_USE;
   } else {
-    setStatusColor(1,1,0);
+    if (lightsOn) {
+      if (doorClosed) {
+        state = USE1;
+      } else {
+      }
+    }
   }
 }
 
 void notInUse() {
-  if (distance < 70) {
+  if (personPresent) {
     state = USE_UNKNOWN;
     useUnknownTimer = millis();
   }
