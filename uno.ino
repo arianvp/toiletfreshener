@@ -37,6 +37,9 @@
 
 // magnetc switch
 #define MAGNETIC_SWITCH_INT      0
+
+
+#define MAGNETIC_SWITCH_PIN      A1
 #define MAGNETIC_SWITCH_DEBOUNCE 50
 
 // Freshener
@@ -48,7 +51,7 @@
 #define INBETWEEN_TRIGGERS_TIME 200
 
 // motion sensor
-#define MOTION_SENSOR_PIN A1
+#define MOTION_SENSOR_INT 0
 
 // distance sensor
 #define DISTANCE_TRIGGER_PIN A2
@@ -164,12 +167,11 @@ void setupButtons() {
 }
 
 void spray_isr();
-void magneticSwitch_isr();
-void setupIntButtons() {
+void setupInterrupts() {
   pinMode(SPRAY_BUTTON_INT+2, INPUT_PULLUP);
   pinMode(MAGNETIC_SWITCH_INT+2, INPUT_PULLUP);
   attachInterrupt(SPRAY_BUTTON_INT, spray_isr, FALLING);
-  attachInterrupt(MAGNETIC_SWITCH_INT, magneticSwitch_isr, FALLING);
+  attachInterrupt(MOTION_SENSOR_INT, motionSensor_isr, RISING);
 }
 
 void setup() {
@@ -177,10 +179,10 @@ void setup() {
   lcd.begin(16,2);
 
   pinMode(FRESHENER_PIN, OUTPUT);
-  pinMode(MOTION_SENSOR_PIN,INPUT);
+  pinMode(MAGNETIC_SWITCH_PIN,INPUT);
 
   setupButtons();
-  setupIntButtons();
+  setupInterrupts();
   setupStatusLeds();
   setStatusColor(0, 0, 0);
 
@@ -198,7 +200,7 @@ void setup() {
 // We proceed to define the senses that our freshener has. 
 // These values will be updated by sensors. some of them asynchronously
 // hence the volatile annonations.
-volatile bool doorOpen = true;
+volatile bool doorOpen = false;
 bool          lightsOn;
 volatile bool personPresent;
 bool          flushing;
@@ -247,7 +249,7 @@ void inBetweenTriggers() {
 }
 
 void triggered() {
-
+  flushing = false;
   setStatusColor(0, 1, 0);
   if (millis() - triggerTime > (unsigned short) getAt(TRIGGER_DELAY_ADDR)) {
     state = TRIGGERING;
@@ -258,21 +260,12 @@ void triggered() {
 
 
 
-// called when the door is closed. LOW is closed. HIGH is open
-void magneticSwitch_isr() {
-  static volatile unsigned long lastDebounceTime;
-
-  if ((millis() - lastDebounceTime) > MAGNETIC_SWITCH_DEBOUNCE) {
-    
-    // why are we setting this? 
-    //triggerTime = lastDebounceTime = millis();
-    // doorOpen = false;
-    digitalWrite(13,HIGH);
-
+void motionSensor_isr() {
+  // if we can flush
+  if (state == USE_PEE || state == USE_POO) {
+    flushing = true;
   }
-
 }
-
 // In this section we handle the three pushbuttons. 
 // one is used to trigger a spray.
 // the other two (left, and right) are used to control the operator menu.
@@ -340,6 +333,33 @@ void handleLeftButton() {
   }
   lastButtonState = reading;
 }
+void handleMagneticSwitch() {
+  static int lastButtonState = HIGH;
+  static int buttonState;
+  static unsigned long lastDebounceTime;
+
+  int reading = digitalRead(MAGNETIC_SWITCH_PIN);
+
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > MAGNETIC_SWITCH_DEBOUNCE) {
+
+    if (reading != buttonState) {
+      buttonState = reading;
+
+
+      if (buttonState == LOW) {
+        lcd.setCursor(0,0);
+        doorOpen = false;
+      } else {
+        doorOpen = true;
+      }
+    }
+  }
+  lastButtonState = reading;
+}
 
 void handleRightButton() {
   static int lastButtonState = HIGH;
@@ -375,10 +395,6 @@ void handleRightButton() {
 
 void handleLightSensor() {
   lightsOn = analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD;
-}
-// Code for the motion sensor. It senses if we're flushing.
-void handleMotionSensor() {
-  flushing = digitalRead(MOTION_SENSOR_PIN);
 }
 
 
@@ -529,7 +545,7 @@ void loop() {
   handleRightButton();
 
   if (!inMenu) {
-    handleMotionSensor();
+    handleMagneticSwitch();
     handleDistanceSensor();
     handleLightSensor();
     
