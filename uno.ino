@@ -57,8 +57,8 @@ LiquidCrystal lcd(9,8,7,6,5,4);
 
 
 enum state {
-  USE_UNKNOWN,
   NOT_IN_USE,
+  USE_UNKNOWN,
   USE1,
   USE2,
   USE_CLEAN,
@@ -79,7 +79,7 @@ enum menu_state {
 
 
 // TODO initial state
-volatile state state = TRIGGERED_TWICE;
+volatile state state = NOT_IN_USE;
 
 volatile bool inMenu = false;
 volatile menu_state menuState;
@@ -134,8 +134,9 @@ void setup() {
   pinMode (blue, OUTPUT);
   pinMode(ledPin, OUTPUT);
   setStatusColor(0, 0, 0);
+
+  // set up spray and magnetic switch interrupts
   attachInterrupt(1, spray_isr, FALLING);
-  
   attachInterrupt(2, magneticSwitch_isr, FALLING);
   
   
@@ -175,6 +176,7 @@ void triggering() {
     decrementAt(chargeAddr);
     digitalWrite(freshener, LOW);
     if (!triggerTwice) {
+       
       state = NOT_IN_USE;
 
     } else {
@@ -307,6 +309,7 @@ void handleRightButton() {
           inMenu = true;
         }
 
+        // uber hax :)
         menuState = (menu_state) (((int)menuState + 1) % ((int)EXIT+1));
       }
     }
@@ -321,11 +324,12 @@ void handleMotionSensor() {
 
 
 
-
+volatile int distance = 0;
 void echo_isr() {
   
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
+    distance = cm;
     /*char str[10];
     sprintf(str, "%.3d", cm);
     lcd.setCursor(0,0);
@@ -337,11 +341,12 @@ void echo_isr() {
 
 
 
+
+// TODO this might overflow
 void handleDistanceSensor() {
   if (millis() >= pingTimer) {
     pingTimer += pingSpeed;
     sonar.ping_timer(echo_isr);
-    
   }
 }
 
@@ -357,19 +362,43 @@ void setStatusColor(int r, int g, int b) {
   digitalWrite(green, !g);
   digitalWrite(blue, !b);
 }
-void notInUse() {
 
+unsigned long maxUseUnknownTime = 5000;
+unsigned long useUnknownTimer;
+void useUnknown() {
+  if ((millis() - useUnknownTimer) > maxUseUnknownTime) {
+    state = NOT_IN_USE;
+  } else {
+    setStatusColor(1,1,0);
+  }
+}
+
+void notInUse() {
+  if (distance < 70) {
+    state = USE_UNKNOWN;
+    useUnknownTimer = millis();
+  }
+  setStatusColor(0,0,0);
+}
+
+void use1() {
+}
+
+void use2() {
+}
+
+void useClean() {
 }
 
 
 void stateMachine() {
 
   switch (state) {
-    case USE_UNKNOWN: break;
+    case USE_UNKNOWN: useUnknown(); break;
     case NOT_IN_USE: notInUse(); break;
-    case USE1: break;
-    case USE2: break;
-    case USE_CLEAN: break;
+    case USE1: use1(); break;
+    case USE2: use2(); break;
+    case USE_CLEAN: useClean(); break;
     case TRIGGERED_ONCE: triggerTwice = false; triggered(); break;
     case TRIGGERED_TWICE: triggerTwice = true; triggered(); break;
     case TRIGGERING: triggering(); break;
