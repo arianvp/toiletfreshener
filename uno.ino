@@ -9,53 +9,76 @@
 #include <EEPROM.h>
 
 
-const int red = 0;
-const int green = 1;
-const int blue = 12;
+// Config values
+
+// lcd pins
+#define RS_PIN 9
+#define E_PIN  8
+#define D4_PIN 7
+#define D5_PIN 6
+#define D6_PIN 5
+#define D7_PIN 4
+ 
+// led pins
+#define RED_PIN   0
+#define GREEN_PIN 1
+#define BLUE_PIN  12
+
+// Button pins
+#define LEFT_BUTTON_PIN      11
+#define LEFT_BUTTON_DEBOUNCE 50
+
+#define RIGHT_BUTTON_PIN      10
+#define RIGHT_BUTTON_DEBOUNCE 50
+
+// Spray button
+#define SPRAY_BUTTON_INT       1
+#define SPRAY_BUTTON_DEBOUNCE  50
+
+// magnetc switch
+#define MAGNETIC_SWITCH_INT      2
+#define MAGNETIC_SWITCH_DEBOUNCE 50
+
+// Freshener
+#define FRESHENER_PIN           A4
+// this is how long the freshener gets power when spraying
+#define FRESHENER_ON_TIME       3000
+// how much time there must be between triggers to fool the
+// device in spraying twice
+#define INBETWEEN_TRIGGERS_TIME 200
+
+// motion sensor
+#define MOTION_SENSOR_PIN A1
+
+// distance sensor
+#define DISTANCE_TRIGGER_PIN A2
+#define DISTANCE_ECHO_PIN    A3
+#define MAX_DISTANCE         190
+#define DISTANCE_PING_SPEED  40
 
 
-const int leftButton = 11;
-const int rightButton = 10;
+// light sensor
+#define LIGHT_SENSOR_PIN       A0
+#define LIGHT_SENSOR_THRESHOLD 200
 
-const int magneticSwitch = 2;
-
-const int freshener = A4;
-
-const int motionSensor = A1;
+// temperature sensor
+#define TEMP_SENSOR_PIN A5
 
 
 
-// Set up distance sensor
-const int trigger = A2;
-const int echo    = A3;
-const int maxDistance = 190;
-volatile unsigned long pingTimer;
-const unsigned long pingSpeed = 40;
-NewPing sonar(trigger,echo,maxDistance);
+
+// EEPROM Stuff
+
+#define CHARGE_ADDR             5
+#define DEFAULT_CHARGES_VALUE   2000
+
+#define TRIGGER_DELAY_ADDR      7
+#define DEFAULT_TRIGGER_DELAY   5000
+#define TRIGGER_DELAY_INCREMENT 5000
+#define MAX_TRIGGER_DELAY       60000
 
 
-// set up temperature
-const int temperatureSensor = A5;
-OneWire oneWire(temperatureSensor);
-DallasTemperature temperature(&oneWire);
-
-
-// set up light sensor
-const int lightSensor = A0;
-const int lightThreshold = 200;
-
-int ledState;
-
-
-int ledPin = 13;
-
-
-// this value is from EEPROM
-short chargesRemaining = 1000;
-
-LiquidCrystal lcd(9,8,7,6,5,4);
-
-
+// States for the state machine
 enum state {
   NOT_IN_USE,
   USE_UNKNOWN,
@@ -78,22 +101,29 @@ enum menu_state {
 
 
 
-// TODO initial state
-volatile state state = NOT_IN_USE;
+// set up lcd
+LiquidCrystal lcd(RS_PIN,E_PIN,D4_PIN,D5_PIN,D6_PIN,D7_PIN);
 
+// set up distance sensor
+unsigned volatile long pingTimer;
+NewPing sonar(DISTANCE_TRIGGER_PIN,DISTANCE_ECHO_PIN,MAX_DISTANCE);
+
+
+// set up temperature
+OneWire oneWire(TEMP_SENSOR_PIN);
+DallasTemperature temperature(&oneWire);
+
+
+
+
+volatile state state = NOT_IN_USE;
 volatile bool inMenu = false;
 volatile menu_state menuState;
 
-const long DEBOUNCE = 40;
 
 
 
-#define DEFAULT_CHARGES_VALUE 2000
-const unsigned short chargeAddr = 5;
 
-#define TRIGGER_DELAY_INCREMENT 5000
-#define MAX_TRIGGER_DELAY       60000
-const unsigned short triggerDelayAddr = chargeAddr + 2;
 
 
 // utility code to acccess the EEPROM in steps of 16 bits
@@ -113,47 +143,57 @@ void setAt(unsigned short addr, unsigned short value) {
 
 
 // specific EEPROM helper functions for resetting tigger delay and charges
-void resetCharges() {
-  setAt(chargeAddr,DEFAULT_CHARGES_VALUE);
-}
-void resetTriggerDelay() {
-  setAt(triggerDelayAddr, TRIGGER_DELAY_INCREMENT);
-}
 
 
 
 // Sets the RGB led to a specific color
 void setStatusColor(int r, int g, int b) {
-  digitalWrite(red, !r);
-  digitalWrite(green, !g);
-  digitalWrite(blue, !b);
+  digitalWrite(RED_PIN, !r);
+  digitalWrite(GREEN_PIN, !g);
+  digitalWrite(BLUE_PIN, !b);
+}
+
+void setupStatusLeds() {
+  pinMode (RED_PIN, OUTPUT);
+  pinMode (GREEN_PIN, OUTPUT);
+  pinMode (BLUE_PIN, OUTPUT);
+}
+
+void setupButtons() {
+  pinMode(LEFT_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(RIGHT_BUTTON_PIN, INPUT_PULLUP);
+}
+
+void spray_isr();
+void magneticSwitch_isr();
+void setupIntButtons() {
+  pinMode(SPRAY_BUTTON_INT+1, INPUT_PULLUP);
+  pinMode(MAGNETIC_SWITCH_INT+1, INPUT_PULLUP);
+  attachInterrupt(SPRAY_BUTTON_INT, spray_isr, FALLING);
+  attachInterrupt(MAGNETIC_SWITCH_INT, magneticSwitch_isr, FALLING);
 }
 
 void setup() {
 
   lcd.begin(16,2);
 
-  pinMode(A4, OUTPUT);
-  pinMode(2, INPUT_PULLUP);
-  pinMode(3, INPUT_PULLUP);
-  pinMode(10, INPUT_PULLUP);
-  pinMode(motionSensor,INPUT);
+  pinMode(FRESHENER_PIN, OUTPUT);
+  pinMode(MOTION_SENSOR_PIN,INPUT);
 
-  pinMode (red, OUTPUT);
-  pinMode (green, OUTPUT);
-  pinMode (blue, OUTPUT);
-  pinMode(ledPin, OUTPUT);
+  setupButtons();
+  setupIntButtons();
+  setupStatusLeds();
   setStatusColor(0, 0, 0);
 
-  // set up spray and magnetic switch interrupts
-  attachInterrupt(1, spray_isr, FALLING);
-  attachInterrupt(2, magneticSwitch_isr, FALLING);
-  
-  
+  // distance sensor timer 
   pingTimer = millis();
 
-  setAt(triggerDelayAddr, 5000);
-  
+  // used for the initial EEPROM flash
+  #ifdef FACTORY_DEFAULT
+  setAt(CHARGE_ADDR, DEFAULT_CHARGES_VALUE);
+  setAt(TRIGGER_DELAY_ADDR, DEFAULT_TRIGGER_DELAY);
+  #endif
+
 }
 
 // We proceed to define the senses that our freshener has. 
@@ -168,7 +208,6 @@ bool          flushing;
 
 //unsigned long triggerDelay = 5000; // from EEPROM;
 
-unsigned long inBetweenTriggersDelay = 200;
 
 volatile unsigned long triggerTime;
 volatile unsigned long inBetweenTriggersTime;
@@ -177,19 +216,17 @@ volatile unsigned long inBetweenTriggersTime;
 
 unsigned long triggeringTime = 0;
 
-// TODO better nam
-unsigned long  onTime = 3000;
 bool triggerTwice = false;
 
 void triggering() {
 
   setStatusColor(0, 0, 0);
-  digitalWrite(freshener, HIGH);
+  digitalWrite(FRESHENER_PIN, HIGH);
 
 
-  if (millis() - triggeringTime > onTime) {
-    decrementAt(chargeAddr);
-    digitalWrite(freshener, LOW);
+  if (millis() - triggeringTime > FRESHENER_ON_TIME) {
+    decrementAt(CHARGE_ADDR);
+    digitalWrite(FRESHENER_PIN, LOW);
     if (!triggerTwice) {
        
       state = NOT_IN_USE;
@@ -203,7 +240,7 @@ void triggering() {
 }
 
 void inBetweenTriggers() {
-  if (millis() - inBetweenTriggersTime > inBetweenTriggersDelay) {
+  if (millis() - inBetweenTriggersTime > INBETWEEN_TRIGGERS_TIME) {
     state = TRIGGERING;
     triggerTwice = false;
     triggeringTime = millis();
@@ -213,7 +250,7 @@ void inBetweenTriggers() {
 void triggered() {
 
   setStatusColor(0, 1, 0);
-  if (millis() - triggerTime > (unsigned short) getAt(triggerDelayAddr)) {
+  if (millis() - triggerTime > (unsigned short) getAt(TRIGGER_DELAY_ADDR)) {
     state = TRIGGERING;
     triggeringTime = millis();
   }
@@ -225,9 +262,8 @@ void triggered() {
 // called when the door is closed
 void magneticSwitch_isr() {
   static volatile unsigned long lastDebounceTime;
-  static long debounceDelay = 50;
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
+  if ((millis() - lastDebounceTime) > MAGNETIC_SWITCH_DEBOUNCE) {
     
     // TODO implement gevolgen
     
@@ -246,9 +282,8 @@ void magneticSwitch_isr() {
 // the interrupt service routine for when the spray button is pressed
 void spray_isr() {
   static volatile unsigned long lastDebounceTime;
-  static long debounceDelay = 50;
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
+  if ((millis() - lastDebounceTime) > SPRAY_BUTTON_DEBOUNCE) {
     digitalWrite(A4, LOW);
     state = TRIGGERED_ONCE;
     triggerTime = lastDebounceTime = millis();
@@ -263,17 +298,16 @@ void spray_isr() {
 void handleLeftButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
-  static long debounceDelay = 100;
   static unsigned long lastDebounceTime;
 
-  int reading = digitalRead(leftButton);
+  int reading = digitalRead(LEFT_BUTTON_PIN);
 
 
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
+  if ((millis() - lastDebounceTime) > LEFT_BUTTON_DEBOUNCE) {
 
     if (reading != buttonState) {
       buttonState = reading;
@@ -288,11 +322,11 @@ void handleLeftButton() {
           // this button is used to select actions in the operator menu
           switch (menuState) {
             case RESET_CHARGES:
-              setAt(chargeAddr, DEFAULT_CHARGES_VALUE);
+              setAt(CHARGE_ADDR, DEFAULT_CHARGES_VALUE);
               break;
             case SET_DELAY:
-              setAt(triggerDelayAddr,TRIGGER_DELAY_INCREMENT+
-                   (getAt(triggerDelayAddr))
+              setAt(TRIGGER_DELAY_ADDR,TRIGGER_DELAY_INCREMENT+
+                   (getAt(TRIGGER_DELAY_ADDR))
                         %  (MAX_TRIGGER_DELAY));
               break;
             case EXIT:
@@ -314,13 +348,13 @@ void handleRightButton() {
   static long debounceDelay = 100;
   static unsigned long lastDebounceTime;
 
-  int reading = digitalRead(rightButton);
+  int reading = digitalRead(RIGHT_BUTTON_PIN);
 
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
+  if ((millis() - lastDebounceTime) > RIGHT_BUTTON_DEBOUNCE) {
 
     if (reading != buttonState) {
       buttonState = reading;
@@ -341,9 +375,12 @@ void handleRightButton() {
 }
 
 
+handleLightSensor() {
+  lightsOn = analogRead(LIGHT_SENSOR_PIN) > LIGHT_SENSOR_THRESHOLD;
+}
 // Code for the motion sensor. It senses if we're flushing.
 void handleMotionSensor() {
- 
+  flushing = digitalRead(MOTION_SENSOR_PIN);
 }
 
 
@@ -357,23 +394,21 @@ void echo_isr() {
   }
 }
 
-
 // TODO this might overflow
 void handleDistanceSensor() {
   if (millis() >= pingTimer) {
-    pingTimer += pingSpeed;
+    pingTimer += DISTANCE_PING_SPEED;
     sonar.ping_timer(echo_isr);
   }
 }
 
 
-
-
-unsigned long maxUseUnknownTime = 5000;
+#define MAX_USE_UNKNOWN_TIME 5000
 unsigned long useUnknownTimer;
+
 void useUnknown() {
   setStatusColor(1,1,0);
-  if ((millis() - useUnknownTimer) > maxUseUnknownTime) {
+  if ((millis() - useUnknownTimer) > MAX_USE_UNKNOWN_TIME) {
     state = NOT_IN_USE;
   } else {
     if (lightsOn) {
@@ -425,13 +460,13 @@ void menuPrinter() {
   char str[17];
   switch (menuState) {
     case SET_DELAY:
-      sprintf(str, "Delay: %.5u   ", getAt(triggerDelayAddr));
+      sprintf(str, "Delay: %.5u   ", getAt(TRIGGER_DELAY_ADDR));
       lcd.print(str);
       lcd.setCursor(0,1);
       lcd.print("Increase    ");
       break;
     case RESET_CHARGES:
-      sprintf(str, "Charges: %.4d", getAt(chargeAddr));
+      sprintf(str, "Charges: %.4d", getAt(CHARGE_ADDR));
       lcd.print(str);
       lcd.setCursor(0,1);
       lcd.print("Reset    ");
@@ -453,6 +488,7 @@ void loop() {
   if (!inMenu) {
     handleMotionSensor();
     handleDistanceSensor();
+    handleLightSensor();
     
     //digitalWrite(13,digitalRead(motionSensor));
     stateMachine();
@@ -467,7 +503,7 @@ void loop() {
     lcd.setCursor(0,1);
     lcd.print("Charges:");
     char str[5];
-    sprintf(str, "%.4d", getAt(chargeAddr));
+    sprintf(str, "%.4d", getAt(CHARGE_ADDR));
     lcd.print(str);
   } else {
     menuPrinter();
