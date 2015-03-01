@@ -44,10 +44,10 @@
 // Freshener
 #define FRESHENER_PIN           A4
 // this is how long the freshener gets power when spraying
-#define FRESHENER_ON_TIME       2000
+#define FRESHENER_ON_TIME       3000
 // how much time there must be between triggers to fool the
 // device in spraying twice
-#define INBETWEEN_TRIGGERS_TIME 200
+#define INBETWEEN_TRIGGERS_TIME 400
 
 // motion sensor
 #define MOTION_SENSOR_INT 0
@@ -61,7 +61,7 @@
 
 // light sensor
 #define LIGHT_SENSOR_PIN       A0
-#define LIGHT_SENSOR_THRESHOLD 200
+#define LIGHT_SENSOR_THRESHOLD 666   // \m/
 
 // temperature sensor
 #define TEMP_SENSOR_PIN A5
@@ -119,7 +119,6 @@ enum state {
   USE_PEE,
   USE_POO,
   USE_CLEAN,
-
   LEAVING,
   TRIGGERED_ONCE,
   TRIGGERED_TWICE,
@@ -155,12 +154,6 @@ DallasTemperature temperature(&oneWire);
 volatile state state = NOT_IN_USE;
 volatile bool inMenu = false;
 volatile menu_state menuState;
-
-
-
-
-
-
 
 // utility code to acccess the EEPROM in steps of 16 bits
 
@@ -456,10 +449,10 @@ void echo_isr() {
   }
 }
 
-// TODO FIXME this might overflow
+
 void handleDistanceSensor() {
-  if (millis() >= pingTimer) {
-    pingTimer += DISTANCE_PING_SPEED;
+  if (millis() - pingTimer > DISTANCE_PING_SPEED) {
+    pingTimer = 0;
     sonar.ping_timer(echo_isr);
   }
 }
@@ -491,7 +484,6 @@ void notInUse() {
     state = USE_UNKNOWN;
     useUnknownTime = millis();
   }
-  //setStatusColor(0,0,0);
 }
 
 
@@ -518,8 +510,10 @@ void usePoo() {
   }
 }
 
+
 void useClean() {
-  if (!doorOpen || ((useTime - millis()) > MAX_CLEAN_TIME))
+  
+  if ((!lightsOn && !doorOpen) || ((useTime - millis()) > MAX_CLEAN_TIME))
   {
     state = LEAVING;
     leavingTime = millis();
@@ -537,7 +531,6 @@ void useClean() {
 // the spraying state. (as the spray button is connected through an interrupt)
 
 // 
-
 void leaving() {
   if ((millis() - leavingTime) > MAX_AFTER_LEAVING_TIME) {
      state = NOT_IN_USE;
@@ -545,6 +538,8 @@ void leaving() {
 }
 
 
+// we tried giving every state a color but we ran out of colors.
+// we decided only to give the states that were in the original FSM a color
 void stateMachine() {
   switch (state) {
     case NOT_IN_USE: 
@@ -625,7 +620,6 @@ void loop() {
     handleDistanceSensor();
     handleLightSensor();
     
-    //digitalWrite(13,digitalRead(motionSensor));
     stateMachine();
     
     lcd.setCursor(0,0);
