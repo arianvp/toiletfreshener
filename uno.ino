@@ -44,7 +44,7 @@
 // Freshener
 #define FRESHENER_PIN           A4
 // this is how long the freshener gets power when spraying
-#define FRESHENER_ON_TIME       3000
+#define FRESHENER_ON_TIME       2000
 // how much time there must be between triggers to fool the
 // device in spraying twice
 #define INBETWEEN_TRIGGERS_TIME 200
@@ -79,6 +79,39 @@
 #define MAX_TRIGGER_DELAY       60000
 
 
+
+
+//// CONFIGURATION
+
+//  this should be tweaked. Test in field! :)
+
+/// after this expires we go to USE_POO
+#define MAX_PEE_TIME         30000
+
+// The maximum shit time. After this we spray 2 times.  This timer is never
+// reached if someone flushes after pooping or peeing.
+// This timer could also be reached if you forget to flush after peeing.
+// which I think is a good case to spray twice as pee smells.
+// in version 2.0 we could automatically flush the toilet after this time.
+// that'd be cool.
+#define MAX_POO_TIME         1800000 // 30 mins
+
+
+// this is a failsafe. We probably can successfully detect when someone
+// finishes cleaning. but just in case we return to LEAVING if this timer
+// expires.
+#define MAX_CLEAN_TIME       1800000
+// the time the system has to decide what's going on. After this time
+// it returns to NOT_IN_USE
+#define MAX_USE_UNKNOWN_TIME 5000
+
+
+// stabiizing time. After a use (be it pee poo or clean) the system
+// has 30 seconds time to stabilize. During this time you can still
+// spray and activate the menu (non-blocking). But no sensor readings
+// are futher processed.
+#define MAX_AFTER_LEAVING_TIME 30000
+
 // States for the state machine
 enum state {
   NOT_IN_USE,
@@ -86,6 +119,8 @@ enum state {
   USE_PEE,
   USE_POO,
   USE_CLEAN,
+
+  LEAVING,
   TRIGGERED_ONCE,
   TRIGGERED_TWICE,
   TRIGGERING,
@@ -206,7 +241,7 @@ void setup() {
   setupButtons();
   setupInterrupts();
   setupStatusLeds();
-  setStatusColor(0, 0, 0);
+  //setStatusColor(0, 0, 0);
 
 }
 
@@ -232,9 +267,11 @@ unsigned long triggeringTime = 0;
 
 bool triggerTwice = false;
 
+unsigned long leavingTime;
+
 void triggering() {
 
-  setStatusColor(0, 0, 0);
+  //setStatusColor(0, 0, 0);
   digitalWrite(FRESHENER_PIN, HIGH);
 
 
@@ -243,7 +280,8 @@ void triggering() {
     digitalWrite(FRESHENER_PIN, LOW);
     if (!triggerTwice) {
        
-      state = NOT_IN_USE;
+      state = LEAVING;
+      leavingTime = millis();
 
     } else {
       state = IN_BETWEEN_TRIGGERS;
@@ -262,7 +300,7 @@ void inBetweenTriggers() {
 }
 
 void triggered() {
-  setStatusColor(0, 1, 0);
+  //setStatusColor(0, 1, 0);
   if (millis() - triggerTime > (unsigned short) getAt(TRIGGER_DELAY_ADDR)) {
     state = TRIGGERING;
     triggeringTime = millis();
@@ -285,7 +323,7 @@ void spray_isr() {
   static volatile unsigned long lastDebounceTime;
   if ((millis() - lastDebounceTime) > SPRAY_BUTTON_DEBOUNCE) {
     digitalWrite(FRESHENER_PIN, LOW);
-    state = TRIGGERED_ONCE;
+    state = TRIGGERED_TWICE;
     triggerTime = lastDebounceTime = millis();
 
     digitalWrite(13,HIGH);
@@ -294,7 +332,7 @@ void spray_isr() {
 
 
 // to get inside the menu. either of the buttons has to be pressed.
-// once in the menu. the left button is the "action" button and the
+// once in the menu. the left button is the "perform action" button and the
 // right button is the "scroll" button. 
 void handleLeftButton() {
   static int lastButtonState = HIGH;
@@ -326,6 +364,7 @@ void handleLeftButton() {
               setAt(CHARGE_ADDR, DEFAULT_CHARGES_VALUE);
               break;
             case SET_DELAY:
+              // cycle between 5 to 60 secs in 5 sec increments
               setAt(TRIGGER_DELAY_ADDR,TRIGGER_DELAY_INCREMENT+
                    (getAt(TRIGGER_DELAY_ADDR))
                         %  (MAX_TRIGGER_DELAY));
@@ -342,6 +381,7 @@ void handleLeftButton() {
   }
   lastButtonState = reading;
 }
+
 void handleMagneticSwitch() {
   static int lastButtonState = HIGH;
   static int buttonState;
@@ -369,6 +409,7 @@ void handleMagneticSwitch() {
   lastButtonState = reading;
 }
 
+// This button is used to cycle through menus
 void handleRightButton() {
   static int lastButtonState = HIGH;
   static int buttonState;
@@ -424,56 +465,25 @@ void handleDistanceSensor() {
 }
 
 
-#define MAX_USE_UNKNOWN_TIME 5000
 unsigned long useUnknownTime;
 
-unsigned long peeTime;
-void useUnknown() {
-  setStatusColor(1,0,1);
+unsigned long useTime;
 
-  // nope this doesn't work.
-  // What we really want to do is:
-  /*
-    Start a timer. (this is started when changing to the useUnknown state)
-    if before the timer expires the door closes. We go to USE_PEE
-    otherwise we go to use poo
-*/
-  
-  
+void useUnknown() {
   if ((millis() - useUnknownTime) < MAX_USE_UNKNOWN_TIME && lightsOn) {
-    if (!doorOpen) {
+    if (!doorOpen) { 
       state = USE_PEE;
-      peeTime = millis();
+      useTime = millis();
     } else {
     }
   } else {
     if (doorOpen) {
       state = USE_CLEAN;
+      useTime = millis();
     } else {
       state = NOT_IN_USE;
     }
   }
-  /*if (doorOpen != lastDoorOpen) {
-    lastDebounceTime = millis();
-  }
-
-  
-  // DEBUG
-  if ((millis() - lastDebounceTime) > MAX_USE_UNKNOWN_TIME) {
-    // this is reached
-    if (_doorOpen != doorOpen) {
-      _doorOpen = doorOpen;
-      if (_doorOpen) {
-         state = USE_CLEAN;
-      } else {
-         state = USE_PEE;
-      }
-    }
-  }
-  lastDoorOpen = doorOpen;
-
- */
-  
 }
 
 void notInUse() {
@@ -481,21 +491,17 @@ void notInUse() {
     state = USE_UNKNOWN;
     useUnknownTime = millis();
   }
-  setStatusColor(0,0,0);
+  //setStatusColor(0,0,0);
 }
 
-//  this should be tweaked. Test in field! :)
-#define MAX_PEE_TIME  30000
 
 void usePee() {
-  setStatusColor(1,1,0);
-  delay(2000);
-  // FIXME  What if people don't flush
   if (flushing) {
-    state = TRIGGERED_TWICE;
+    state = TRIGGERED_ONCE;
     triggerTime = millis();
   } else {
-    if ((millis() - peeTime) > MAX_PEE_TIME) {
+    // if we exceeded pee time
+    if ((millis() - useTime) > MAX_PEE_TIME) {
       // we are probably taking a shit
       state = USE_POO;
     }
@@ -503,36 +509,83 @@ void usePee() {
 }
 
 // FIXME. setting timers manually is error-prone. make helper method
+// TODO We could get stuck in this state if people forget to flush.
+// after a certain timeout we trigger anyway
 void usePoo() {
-  setStatusColor(1,0,0);
-  if (flushing) {
+  if (flushing || ((millis() - useTime) < MAX_POO_TIME)) {
     state = TRIGGERED_TWICE;
     triggerTime = millis();
   }
 }
 
 void useClean() {
-  setStatusColor(0,0,1);
-
-  if (!doorOpen )
+  if (!doorOpen || ((useTime - millis()) > MAX_CLEAN_TIME))
   {
-    state = NOT_IN_USE;
+    state = LEAVING;
+    leavingTime = millis();
+  }
+}
+
+
+// We added this state to stop the following scenario:
+// Say we just took a shit or a pee. Or we just cleaned.
+// We have been signaled that this state ended. Either by flushing (poo,pee)
+// or by closing the door (cleaning).  We should give some time to let the
+// system stabilize. Otherwise it might detect the person leaving as a new
+// action and it would get into a state unwillingly.
+// basically we're spinlocking. Though an interrupt could still bring us into
+// the spraying state. (as the spray button is connected through an interrupt)
+
+// 
+
+void leaving() {
+  if ((millis() - leavingTime) > MAX_AFTER_LEAVING_TIME) {
+     state = NOT_IN_USE;
   }
 }
 
 
 void stateMachine() {
   switch (state) {
-    case USE_UNKNOWN: useUnknown(); break;
-    case NOT_IN_USE: notInUse(); break;
-    case USE_PEE: usePee(); break;
-    case USE_POO: usePoo(); break;
-    case USE_CLEAN: useClean(); break;
-    case TRIGGERED_ONCE: triggerTwice = false; triggered(); break;
-    case TRIGGERED_TWICE: triggerTwice = true; triggered(); break;
-    case TRIGGERING: triggering(); break;
-    case IN_BETWEEN_TRIGGERS: inBetweenTriggers(); break;
-    case IN_MENU: break;
+    case NOT_IN_USE: 
+      setStatusColor(0,0,0);
+      notInUse(); break;
+    case USE_UNKNOWN:
+      setStatusColor(1,0,1);
+      useUnknown();
+      break;
+    case USE_PEE:
+      setStatusColor(1,1,0);
+      usePee(); break;
+    case USE_POO:
+      setStatusColor(1,0,0);
+      usePoo(); break;
+    case USE_CLEAN:
+      setStatusColor(0,0,1);
+      useClean(); break;
+    case LEAVING:
+      setStatusColor(0,0,0);
+      leaving(); break;
+    case TRIGGERED_ONCE:
+      setStatusColor(0,1,0);
+      triggerTwice = false;
+      triggered();
+      break;
+    case TRIGGERED_TWICE:
+      setStatusColor(0,1,1);
+      triggerTwice = true; triggered();
+      break;
+    case TRIGGERING:
+      setStatusColor(0,0,0);
+      triggering();
+      break;
+    case IN_BETWEEN_TRIGGERS:
+      setStatusColor(0,0,0);
+      inBetweenTriggers();
+      break;
+    case IN_MENU:
+      setStatusColor(1,1,1);
+      break;
   }
 }
 
@@ -566,6 +619,7 @@ void loop() {
   handleLeftButton();
   handleRightButton();
 
+
   if (!inMenu) {
     handleMagneticSwitch();
     handleDistanceSensor();
@@ -578,7 +632,7 @@ void loop() {
     temperature.requestTemperatures();
     lcd.print(temperature.getTempCByIndex(0));
     lcd.print((char)223);
-    lcd.print("C");
+    lcd.print("C       ");
     
     
     lcd.setCursor(0,1);
@@ -587,6 +641,7 @@ void loop() {
     sprintf(str, "%.4d", getAt(CHARGE_ADDR));
     lcd.print(str);
   } else {
+    setStatusColor(1,1,1);
     menuPrinter();
     
   }
