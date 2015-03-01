@@ -36,7 +36,6 @@
 #define SPRAY_BUTTON_DEBOUNCE  50
 
 // magnetc switch
-#define MAGNETIC_SWITCH_INT      0
 
 
 #define MAGNETIC_SWITCH_PIN      A1
@@ -169,8 +168,8 @@ void setupButtons() {
 void spray_isr();
 void setupInterrupts() {
   pinMode(SPRAY_BUTTON_INT+2, INPUT_PULLUP);
-  pinMode(MAGNETIC_SWITCH_INT+2, INPUT_PULLUP);
-  attachInterrupt(SPRAY_BUTTON_INT, spray_isr, FALLING);
+  pinMode(MOTION_SENSOR_INT+2, INPUT);
+  attachInterrupt(SPRAY_BUTTON_INT, spray_isr, RISING);
   attachInterrupt(MOTION_SENSOR_INT, motionSensor_isr, RISING);
 }
 
@@ -178,13 +177,12 @@ void setup() {
 
   lcd.begin(16,2);
 
-  pinMode(FRESHENER_PIN, OUTPUT);
-  pinMode(MAGNETIC_SWITCH_PIN,INPUT);
 
-  setupButtons();
-  setupInterrupts();
-  setupStatusLeds();
-  setStatusColor(0, 0, 0);
+  pinMode(13,OUTPUT);
+  pinMode(FRESHENER_PIN, OUTPUT);
+
+  pinMode(MAGNETIC_SWITCH_PIN,INPUT_PULLUP);
+
 
   // distance sensor timer 
   pingTimer = millis();
@@ -195,6 +193,21 @@ void setup() {
   setAt(TRIGGER_DELAY_ADDR, DEFAULT_TRIGGER_DELAY);
   #endif
 
+  pinMode(MOTION_SENSOR_INT+2,INPUT);
+  digitalWrite(MOTION_SENSOR_INT+2, LOW);
+  // callibrate PIR. takes 60 seconds
+  lcd.print("Calibrating...");
+  for (int i = 5; i != 0; i--)
+  {
+    lcd.setCursor(0,1);
+    lcd.print(i);
+    delay(1000);
+  }
+  setupButtons();
+  setupInterrupts();
+  setupStatusLeds();
+  setStatusColor(0, 0, 0);
+
 }
 
 // We proceed to define the senses that our freshener has. 
@@ -203,7 +216,7 @@ void setup() {
 volatile bool doorOpen = false;
 bool          lightsOn;
 volatile bool personPresent;
-bool          flushing;
+volatile bool flushing;
 
 
 
@@ -249,7 +262,6 @@ void inBetweenTriggers() {
 }
 
 void triggered() {
-  flushing = false;
   setStatusColor(0, 1, 0);
   if (millis() - triggerTime > (unsigned short) getAt(TRIGGER_DELAY_ADDR)) {
     state = TRIGGERING;
@@ -261,10 +273,7 @@ void triggered() {
 
 
 void motionSensor_isr() {
-  // if we can flush
-  if (state == USE_PEE || state == USE_POO) {
-    flushing = true;
-  }
+  personPresent = true;
 }
 // In this section we handle the three pushbuttons. 
 // one is used to trigger a spray.
@@ -274,12 +283,12 @@ void motionSensor_isr() {
 // the interrupt service routine for when the spray button is pressed
 void spray_isr() {
   static volatile unsigned long lastDebounceTime;
-
   if ((millis() - lastDebounceTime) > SPRAY_BUTTON_DEBOUNCE) {
-    digitalWrite(A4, LOW);
+    digitalWrite(FRESHENER_PIN, LOW);
     state = TRIGGERED_ONCE;
     triggerTime = lastDebounceTime = millis();
 
+    digitalWrite(13,HIGH);
   }
 }
 
@@ -351,10 +360,9 @@ void handleMagneticSwitch() {
 
 
       if (buttonState == LOW) {
-        lcd.setCursor(0,0);
-        doorOpen = false;
+        flushing = false;
       } else {
-        doorOpen = true;
+        flushing = true;
       }
     }
   }
@@ -402,7 +410,8 @@ void handleLightSensor() {
 void echo_isr() {
   if (sonar.check_timer()) {
     int cm = sonar.ping_result / US_ROUNDTRIP_CM;
-    personPresent = cm < 70;
+    doorOpen = cm > 10;
+//    personPresent = cm < 70;
   }
 }
 
@@ -418,14 +427,9 @@ void handleDistanceSensor() {
 #define MAX_USE_UNKNOWN_TIME 5000
 unsigned long useUnknownTime;
 
-
+unsigned long peeTime;
 void useUnknown() {
   setStatusColor(1,0,1);
-  static bool doorHasBeenClosed = false;
-  static unsigned long lastDebounceTime;
-
-  lcd.setCursor(0,0);
-  lcd.print(doorOpen);
 
   // nope this doesn't work.
   // What we really want to do is:
@@ -436,6 +440,19 @@ void useUnknown() {
 */
   
   
+  if ((millis() - useUnknownTime) < MAX_USE_UNKNOWN_TIME && lightsOn) {
+    if (!doorOpen) {
+      state = USE_PEE;
+      peeTime = millis();
+    } else {
+    }
+  } else {
+    if (doorOpen) {
+      state = USE_CLEAN;
+    } else {
+      state = NOT_IN_USE;
+    }
+  }
   /*if (doorOpen != lastDoorOpen) {
     lastDebounceTime = millis();
   }
@@ -470,12 +487,12 @@ void notInUse() {
 //  this should be tweaked. Test in field! :)
 #define MAX_PEE_TIME  30000
 
-unsigned long peeTime;
 void usePee() {
   setStatusColor(1,1,0);
+  delay(2000);
   // FIXME  What if people don't flush
   if (flushing) {
-    state = TRIGGERED_ONCE;
+    state = TRIGGERED_TWICE;
     triggerTime = millis();
   } else {
     if ((millis() - peeTime) > MAX_PEE_TIME) {
@@ -496,6 +513,11 @@ void usePoo() {
 
 void useClean() {
   setStatusColor(0,0,1);
+
+  if (!doorOpen )
+  {
+    state = NOT_IN_USE;
+  }
 }
 
 
